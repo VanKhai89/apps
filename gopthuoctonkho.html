@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tool Gộp (Merge) File Excel Tồn Kho</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.min.js"></script>
+</head>
+<body class="bg-gray-100 p-8">
+    <div class="max-w-6xl mx-auto bg-white p-6 rounded-lg shadow-md">
+        <h1 class="text-2xl font-bold mb-4 text-blue-600">Công cụ Gộp File Excel Bảng Kê Thuốc Tồn Kho</h1>
+        <p class="mb-6 text-gray-600">
+            Chọn nhiều file Excel cần gộp. Tool sẽ tự động bỏ qua các header/block bị lặp lại, nhóm theo <strong>Mã số</strong> và cộng dồn các cột số lượng, trị giá (Từ cột G đến N).
+        </p>
+        
+        <div class="mb-6 border-2 border-dashed border-gray-300 p-6 rounded-lg text-center bg-gray-50 hover:bg-gray-100 transition">
+            <label class="block text-sm font-medium text-gray-700 mb-2 cursor-pointer">
+                <span class="block mb-2">Click để chọn file hoặc kéo thả file vào đây</span>
+                <input type="file" id="fileInput" multiple accept=".xlsx, .xls" class="block w-full text-sm text-gray-500
+                    file:mr-4 file:py-2 file:px-4
+                    file:rounded-md file:border-0
+                    file:text-sm file:font-semibold
+                    file:bg-blue-50 file:text-blue-700
+                    hover:file:bg-blue-100 cursor-pointer mx-auto
+                "/>
+            </label>
+        </div>
+
+        <button id="mergeBtn" class="bg-blue-600 text-white px-6 py-2 rounded shadow hover:bg-blue-700 transition font-medium">
+            Thực hiện gộp & Tải xuống file tổng
+        </button>
+
+        <div id="status" class="mt-4 text-sm font-medium hidden p-3 rounded"></div>
+        
+        <div id="preview" class="mt-8 overflow-x-auto hidden">
+            <h2 class="text-lg font-semibold mb-2">Xem trước dữ liệu gộp (Hiển thị tối đa 100 dòng)</h2>
+            <table class="min-w-full text-sm text-left text-gray-700 border">
+                <thead class="text-xs text-gray-700 uppercase bg-gray-200">
+                    <tr>
+                        <th class="border px-3 py-2 text-center" rowspan="2">STT</th>
+                        <th class="border px-3 py-2" rowspan="2">Mã số</th>
+                        <th class="border px-3 py-2" rowspan="2">Tên dược / vật tư</th>
+                        <th class="border px-3 py-2 text-center" rowspan="2">ĐVT</th>
+                        <th class="border px-3 py-2 text-right" rowspan="2">Đơn giá</th>
+                        <th class="border px-3 py-2 text-center" colspan="2">Tồn đầu kỳ</th>
+                        <th class="border px-3 py-2 text-center" colspan="2">Nhập</th>
+                        <th class="border px-3 py-2 text-center" colspan="2">Xuất</th>
+                        <th class="border px-3 py-2 text-center" colspan="2">Tồn cuối kỳ</th>
+                    </tr>
+                    <tr>
+                        <th class="border px-3 py-1 text-right">SL</th>
+                        <th class="border px-3 py-1 text-right">Trị giá</th>
+                        <th class="border px-3 py-1 text-right">SL</th>
+                        <th class="border px-3 py-1 text-right">Trị giá</th>
+                        <th class="border px-3 py-1 text-right">SL</th>
+                        <th class="border px-3 py-1 text-right">Trị giá</th>
+                        <th class="border px-3 py-1 text-right">SL</th>
+                        <th class="border px-3 py-1 text-right">Trị giá</th>
+                    </tr>
+                </thead>
+                <tbody id="previewBody">
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        document.getElementById('mergeBtn').addEventListener('click', async () => {
+            const files = document.getElementById('fileInput').files;
+            const status = document.getElementById('status');
+            
+            if (files.length === 0) {
+                alert('Vui lòng chọn ít nhất 1 file Excel!');
+                return;
+            }
+
+            status.classList.remove('hidden');
+            status.textContent = 'Đang xử lý và gộp dữ liệu...';
+            status.className = 'mt-4 text-sm font-medium bg-blue-100 text-blue-700 p-3 rounded';
+
+            const itemsMap = new Map();
+
+            try {
+                for (let i = 0; i < files.length; i++) {
+                    const file = files[i];
+                    const data = await file.arrayBuffer();
+                    const workbook = XLSX.read(data, { type: 'array' });
+                    
+                    // Lấy sheet đầu tiên
+                    const firstSheetName = workbook.SheetNames[0];
+                    const worksheet = workbook.Sheets[firstSheetName];
+                    
+                    // Convert sang mảng array 2 chiều
+                    const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: 0 });
+                    
+                    for (let r = 0; r < rows.length; r++) {
+                        const row = rows[r];
+                        // Theo format file: 
+                        // A=0(margin), B=1(STT), C=2(Mã), D=3(Tên), E=4(ĐVT), F=5(Đơn giá)
+                        // G=6(TĐ_SL), H=7(TĐ_TG), I=8(N_SL), J=9(N_TG), K=10(X_SL), L=11(X_TG), M=12(TCK_SL), N=13(TCK_TG)
+                        
+                        const maSo = row[2];
+                        const ten = row[3];
+                        
+                        // Kiểm tra nếu không phải dòng dữ liệu hợp lệ (header, dòng trống...)
+                        if (!maSo || typeof maSo !== 'string' && typeof maSo !== 'number' || !ten) continue;
+                        const maSoStr = String(maSo).trim();
+                        // Bỏ qua nếu là dòng header (Cột C chứa chữ "mã số")
+                        if (maSoStr === '' || maSoStr.toLowerCase().includes('mã số') || maSoStr.toLowerCase() === 'mã') continue;
+                        
+                        const dvt = row[4] || '';
+                        const donGia = parseFloat(row[5]) || 0;
+                        const td_sl = parseFloat(row[6]) || 0;
+                        const td_tg = parseFloat(row[7]) || 0;
+                        const nhap_sl = parseFloat(row[8]) || 0;
+                        const nhap_tg = parseFloat(row[9]) || 0;
+                        const xuat_sl = parseFloat(row[10]) || 0;
+                        const xuat_tg = parseFloat(row[11]) || 0;
+                        const tck_sl = parseFloat(row[12]) || 0;
+                        const tck_tg = parseFloat(row[13]) || 0;
+
+                        // Gom nhóm theo Mã số, Tên và Đơn giá
+                        const tenStr = String(ten).trim();
+                        const key = `${maSoStr}_${tenStr}_${donGia}`;
+
+                        if (itemsMap.has(key)) {
+                            const existing = itemsMap.get(key);
+                            existing.td_sl += td_sl;
+                            existing.td_tg += td_tg;
+                            existing.nhap_sl += nhap_sl;
+                            existing.nhap_tg += nhap_tg;
+                            existing.xuat_sl += xuat_sl;
+                            existing.xuat_tg += xuat_tg;
+                            existing.tck_sl += tck_sl;
+                            existing.tck_tg += tck_tg;
+                        } else {
+                            itemsMap.set(key, {
+                                maSo: maSoStr,
+                                ten: tenStr,
+                                dvt: dvt,
+                                donGia: donGia,
+                                td_sl, td_tg,
+                                nhap_sl, nhap_tg,
+                                xuat_sl, xuat_tg,
+                                tck_sl, tck_tg
+                            });
+                        }
+                    }
+                }
+
+                const mergedData = Array.from(itemsMap.values());
+                
+                // Sắp xếp theo tên cho dễ nhìn (tùy chọn)
+                mergedData.sort((a, b) => a.ten.localeCompare(b.ten));
+
+                // Hiển thị preview
+                renderPreview(mergedData);
+
+                // Xuất file Excel
+                exportToExcel(mergedData);
+
+                status.textContent = '✅ Gộp thành công ' + mergedData.length + ' mặt hàng! File đang được tải xuống...';
+                status.className = 'mt-4 text-sm font-medium bg-green-100 text-green-700 p-3 rounded';
+            } catch (error) {
+                console.error(error);
+                status.textContent = '❌ Đã xảy ra lỗi: ' + error.message;
+                status.className = 'mt-4 text-sm font-medium bg-red-100 text-red-700 p-3 rounded';
+            }
+        });
+
+        function renderPreview(data) {
+            const preview = document.getElementById('preview');
+            const tbody = document.getElementById('previewBody');
+            tbody.innerHTML = '';
+            
+            const limit = Math.min(data.length, 100);
+            for (let i = 0; i < limit; i++) {
+                const item = data[i];
+                const tr = document.createElement('tr');
+                tr.className = 'bg-white border-b hover:bg-gray-50';
+                tr.innerHTML = `
+                    <td class="border px-3 py-2 text-center">${i + 1}</td>
+                    <td class="border px-3 py-2 font-medium">${item.maSo}</td>
+                    <td class="border px-3 py-2">${item.ten}</td>
+                    <td class="border px-3 py-2 text-center">${item.dvt}</td>
+                    <td class="border px-3 py-2 text-right">${formatNumber(item.donGia)}</td>
+                    <td class="border px-3 py-2 text-right">${formatNumber(item.td_sl)}</td>
+                    <td class="border px-3 py-2 text-right">${formatNumber(item.td_tg)}</td>
+                    <td class="border px-3 py-2 text-right">${formatNumber(item.nhap_sl)}</td>
+                    <td class="border px-3 py-2 text-right">${formatNumber(item.nhap_tg)}</td>
+                    <td class="border px-3 py-2 text-right">${formatNumber(item.xuat_sl)}</td>
+                    <td class="border px-3 py-2 text-right">${formatNumber(item.xuat_tg)}</td>
+                    <td class="border px-3 py-2 text-right">${formatNumber(item.tck_sl)}</td>
+                    <td class="border px-3 py-2 text-right text-blue-600 font-semibold">${formatNumber(item.tck_tg)}</td>
+                `;
+                tbody.appendChild(tr);
+            }
+            preview.classList.remove('hidden');
+        }
+
+        function formatNumber(num) {
+            if (!num) return '0';
+            // Định dạng kiểu VNĐ (có dấu phân cách hàng nghìn)
+            return new Intl.NumberFormat('vi-VN').format(num);
+        }
+
+        function exportToExcel(data) {
+            const wb = XLSX.utils.book_new();
+            const excelData = [];
+            
+            // Header
+            excelData.push(["", "", "", "BẢNG KÊ THUỐC TỒN KHO TỔNG HỢP"]);
+            excelData.push([]);
+            excelData.push(["", "STT", "Mã số", "Tên dược / vật tư", "ĐVT", "Đơn giá", "Tồn đầu kỳ", "", "Nhập", "", "Xuất", "", "Tồn cuối kỳ", ""]);
+            excelData.push(["", "", "", "", "", "", "SL", "Trị Giá", "SL", "Trị Giá", "SL", "Trị Giá", "SL", "Trị Giá"]);
+            
+            // Data
+            let stt = 1;
+            for (const item of data) {
+                excelData.push([
+                    "", // Cột A khoảng trắng
+                    stt++, // Cột B
+                    item.maSo, // Cột C
+                    item.ten, // Cột D
+                    item.dvt, // Cột E
+                    item.donGia, // Cột F
+                    item.td_sl, // Cột G
+                    item.td_tg, // Cột H
+                    item.nhap_sl, // Cột I
+                    item.nhap_tg, // Cột J
+                    item.xuat_sl, // Cột K
+                    item.xuat_tg, // Cột L
+                    item.tck_sl, // Cột M
+                    item.tck_tg  // Cột N
+                ]);
+            }
+
+            const ws = XLSX.utils.aoa_to_sheet(excelData);
+
+            // Gộp ô (Merge cells)
+            ws['!merges'] = [
+                { s: { r: 0, c: 3 }, e: { r: 0, c: 8 } }, // Title
+                { s: { r: 2, c: 1 }, e: { r: 3, c: 1 } }, // STT
+                { s: { r: 2, c: 2 }, e: { r: 3, c: 2 } }, // Mã số
+                { s: { r: 2, c: 3 }, e: { r: 3, c: 3 } }, // Tên
+                { s: { r: 2, c: 4 }, e: { r: 3, c: 4 } }, // ĐVT
+                { s: { r: 2, c: 5 }, e: { r: 3, c: 5 } }, // Đơn giá
+                { s: { r: 2, c: 6 }, e: { r: 2, c: 7 } }, // Tồn đầu kỳ
+                { s: { r: 2, c: 8 }, e: { r: 2, c: 9 } }, // Nhập
+                { s: { r: 2, c: 10 }, e: { r: 2, c: 11 } }, // Xuất
+                { s: { r: 2, c: 12 }, e: { r: 2, c: 13 } } // Tồn cuối kỳ
+            ];
+
+            // Căn chỉnh độ rộng các cột
+            ws['!cols'] = [
+                { wch: 3 },  // A
+                { wch: 5 },  // B (STT)
+                { wch: 15 }, // C (Mã)
+                { wch: 30 }, // D (Tên)
+                { wch: 8 },  // E (ĐVT)
+                { wch: 10 }, // F (Đơn giá)
+                { wch: 8 },  // G (SL)
+                { wch: 12 }, // H (Trị giá)
+                { wch: 8 },  // I
+                { wch: 12 }, // J
+                { wch: 8 },  // K
+                { wch: 12 }, // L
+                { wch: 8 },  // M
+                { wch: 12 }  // N
+            ];
+
+            // --- THÊM BORDER VÀ FORMAT STYLE CHO BẢNG ---
+            const borderStyle = {
+                top: { style: "thin", color: { rgb: "000000" } },
+                bottom: { style: "thin", color: { rgb: "000000" } },
+                left: { style: "thin", color: { rgb: "000000" } },
+                right: { style: "thin", color: { rgb: "000000" } }
+            };
+
+            const range = XLSX.utils.decode_range(ws['!ref']);
+            // Bắt đầu từ dòng 3 (index 2) là dòng tiêu đề, đến hết dữ liệu
+            for (let R = 2; R <= range.e.r; ++R) {
+                // Bắt đầu từ cột B (index 1) đến cột N (index 13)
+                for (let C = 1; C <= 13; ++C) {
+                    const cell_address = { c: C, r: R };
+                    const cell_ref = XLSX.utils.encode_cell(cell_address);
+                    
+                    // Nếu ô chưa tồn tại thì tạo mới
+                    if (!ws[cell_ref]) {
+                        ws[cell_ref] = { t: "s", v: "" };
+                    }
+                    
+                    // Gắn border cho ô
+                    if (!ws[cell_ref].s) ws[cell_ref].s = {};
+                    ws[cell_ref].s.border = borderStyle;
+                    ws[cell_ref].s.font = { name: "Arial", sz: 11 };
+
+                    // Format riêng cho dòng tiêu đề (Header)
+                    if (R === 2 || R === 3) {
+                        ws[cell_ref].s.font.bold = true;
+                        ws[cell_ref].s.alignment = { horizontal: "center", vertical: "center", wrapText: true };
+                        ws[cell_ref].s.fill = { fgColor: { rgb: "E2EFDA" } }; // Màu xanh nhạt
+                    }
+
+                    // Định dạng số kiểu VNĐ (phân cách hàng nghìn) cho các dòng dữ liệu (từ R=4 trở đi)
+                    if (R >= 4) {
+                        // Từ cột F(5) đến N(13) bao gồm Đơn giá, Số lượng, Trị giá
+                        if (C >= 5 && C <= 13) {
+                            ws[cell_ref].z = '#,##0';
+                        }
+                    }
+                }
+            }
+            
+            // Căn giữa, in đậm cho Tiêu đề chính "BẢNG KÊ THUỐC TỒN KHO TỔNG HỢP"
+            if(ws['D1']) {
+                if(!ws['D1'].s) ws['D1'].s = {};
+                ws['D1'].s.font = { name: "Arial", sz: 14, bold: true };
+                ws['D1'].s.alignment = { horizontal: "center", vertical: "center" };
+            }
+
+            XLSX.utils.book_append_sheet(wb, ws, "Tổng Hợp");
+
+            // Tải file về máy
+            const dateStr = new Date().toISOString().slice(0,10).replace(/-/g, "");
+            XLSX.writeFile(wb, `TongHop_TonKho_${dateStr}.xlsx`);
+        }
+    </script>
+</body>
+</html>
