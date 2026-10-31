@@ -1,6 +1,6 @@
 {
   "android": {
-    "RV": true,
+    "RV": false,
     "MAIN_MENU": 1000,
     "GAME_PLAY": 3
   },
